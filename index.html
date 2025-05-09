@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <title>Angry Bowling Ultra Violento</title>
+    <meta charset="utf-8" />
+    <style>
+        body { margin: 0; overflow: hidden; }
+        #score {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            color: white;
+            font-size: 24px;
+            font-family: Arial;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: Arial;
+            text-shadow: 1px 1px 2px black;
+        }
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: white;
+            font-family: Arial;
+            text-shadow: 1px 1px 2px black;
+        }
+    </style>
+</head>
+<body>
+    <div id="score">Puntos: 0</div>
+    <div id="info">
+        ANGRY BOWLING<br/>
+        Mueve la cámara con el mouse y lanza bolas con click<br/>
+        WASD: Movimiento | Espacio: Saltar
+    </div>
+    <div id="controls">
+        F: Niebla On/Off | L: Luz On/Off | R: Reset Pines
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+// VARIABLES GLOBALES
+let score = 0;
+let pins = [];
+let balls = [];
+let isDancing = false;
+let danceType = 0;
+const BALL_SPEED = 35;
+const PIN_COUNT = 15;
+
+// CONFIGURACIÓN THREE.JS
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x222222);
+scene.fog = new THREE.Fog(0x222222, 10, 50);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+camera.position.set(0, 3, 8);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+// SISTEMA FÍSICO
+const gravity = 9.82;
+const player = {
+    velocity: new THREE.Vector3(),
+    position: new THREE.Vector3(),
+    speed: 7,
+    jumpForce: 8,
+    canJump: true
+};
+
+// LUCES
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+scene.add(ambientLight);
+
+const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+directionalLight.position.set(-10, 15, 10);
+directionalLight.castShadow = true;
+scene.add(directionalLight);
+
+// SUELO
+const groundGeometry = new THREE.PlaneGeometry(100, 100);
+const groundMaterial = new THREE.MeshStandardMaterial({ 
+    color: 0x454545,
+    roughness: 0.8,
+    metalness: 0.2
+});
+const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// MODELOS
+function createPin() {
+    const pin = new THREE.Group();
+    
+    // Cuerpo principal
+    const body = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.3, 0.5, 1.5, 16),
+        new THREE.MeshPhongMaterial({ color: 0xff0000 })
+    );
+    
+    // Banda decorativa
+    const band = new THREE.Mesh(
+        new THREE.TorusGeometry(0.35, 0.05, 8, 16),
+        new THREE.MeshPhongMaterial({ color: 0xffffff })
+    );
+    band.position.y = 0.8;
+    band.rotation.x = Math.PI/2;
+    
+    pin.add(body, band);
+    pin.castShadow = true;
+    pin.receiveShadow = true;
+    return pin;
+}
+
+function createBall() {
+    const ball = new THREE.Mesh(
+        new THREE.SphereGeometry(0.4, 32, 32),
+        new THREE.MeshPhongMaterial({ 
+            color: 0xFFD700,
+            shininess: 100 
+        })
+    );
+    ball.castShadow = true;
+    ball.receiveShadow = true;
+    return ball;
+}
+
+// GENERADOR DE PINOS
+function generatePins(count) {
+    pins.forEach(p => scene.remove(p));
+    pins = [];
+    
+    for(let i = 0; i < count; i++) {
+        const pin = createPin();
+        pin.position.set(
+            (Math.random() - 0.5) * 20,
+            0.75,
+            (Math.random() - 0.5) * 20
+        );
+        scene.add(pin);
+        pins.push({
+            mesh: pin,
+            originalPos: pin.position.clone(),
+            active: true
+        });
+    }
+}
+
+// SISTEMA DE COLISIONES
+function checkCollisions() {
+    balls.forEach((ball, ballIndex) => {
+        if(!ball.active) return;
+        
+        // Colisión con pines
+        pins.forEach((pin, pinIndex) => {
+            if(pin.active && pin.mesh.position.distanceTo(ball.mesh.position) < 1.2) {
+                score += 20;
+                document.getElementById('score').textContent = `Puntos: ${score}`;
+                pin.active = false;
+                scene.remove(pin.mesh);
+                
+                // Generar nuevos pines si se destruyen todos
+                if(pins.filter(p => p.active).length === 0) {
+                    generatePins(PIN_COUNT + Math.floor(score/100));
+                }
+            }
+        });
+        
+        // Colisión con suelo
+        if(ball.mesh.position.y < 0.4) {
+            ball.velocity.y *= -0.6;
+            ball.mesh.position.y = 0.4;
+            ball.velocity.multiplyScalar(0.9);
+        }
+    });
+}
+
+// ANIMACIONES DE CAMARA
+function danceCamera(time) {
+    if(!isDancing) return;
+    
+    const danceSpeed = danceType === 1 ? 5 : 8;
+    const intensity = danceType === 1 ? 0.5 : 1.8;
+    
+    camera.position.y = 3 + Math.sin(time * danceSpeed) * intensity;
+    camera.rotation.z = Math.sin(time * danceSpeed * 1.5) * intensity * 0.3;
+    
+    if(danceType === 2) {
+        camera.rotation.x = Math.cos(time * danceSpeed) * intensity * 0.5;
+        camera.rotation.y = Math.sin(time * danceSpeed) * intensity;
+    }
+}
+
+// CONTROL DEL JUGADOR
+function updatePlayer(delta) {
+    const moveVector = new THREE.Vector3();
+    
+    if(keyStates['KeyW']) moveVector.z -= 1;
+    if(keyStates['KeyS']) moveVector.z += 1;
+    if(keyStates['KeyA']) moveVector.x -= 1;
+    if(keyStates['KeyD']) moveVector.x += 1;
+    
+    moveVector.normalize().multiplyScalar(player.speed * delta);
+    moveVector.applyEuler(new THREE.Euler(0, camera.rotation.y, 0));
+    player.position.add(moveVector);
+    
+    // Gravedad y salto
+    player.velocity.y -= gravity * delta;
+    player.position.y += player.velocity.y * delta;
+    
+    // Colisión con suelo
+    if(player.position.y <= 1) {
+        player.position.y = 1;
+        player.velocity.y = 0;
+        player.canJump = true;
+    }
+    
+    camera.position.copy(player.position).add(new THREE.Vector3(0, 2, 0));
+}
+
+// SISTEMA DE LANZAMIENTO
+function throwBall() {
+    const ball = createBall();
+    ball.position.copy(camera.position);
+    scene.add(ball);
+    
+    const direction = new THREE.Vector3();
+    camera.getWorldDirection(direction);
+    
+    balls.push({
+        mesh: ball,
+        velocity: direction.multiplyScalar(BALL_SPEED),
+        active: true
+    });
+}
+
+// EVENTOS
+const keyStates = {};
+document.addEventListener('keydown', (e) => {
+    keyStates[e.code] = true;
+    
+    if(e.key === ' ') {
+        if(player.canJump) {
+            player.velocity.y = player.jumpForce;
+            player.canJump = false;
+        }
+    }
+    
+    if(e.key === 'r') generatePins(PIN_COUNT);
+    if(e.key === 'f') scene.fog.density = scene.fog.density ? 0 : 0.15;
+    if(e.key === 'l') directionalLight.visible = !directionalLight.visible;
+});
+
+document.addEventListener('keyup', (e) => keyStates[e.code] = false);
+
+document.addEventListener('click', () => {
+    if(document.pointerLockElement !== document.body) {
+        document.body.requestPointerLock();
+    } else {
+        throwBall();
+    }
+});
+
+document.addEventListener('mousemove', (e) => {
+    if(document.pointerLockElement === document.body) {
+        camera.rotation.y -= e.movementX * 0.002;
+        camera.rotation.x = THREE.MathUtils.clamp(
+            camera.rotation.x - e.movementY * 0.002,
+            -Math.PI/2.5,
+            Math.PI/2.5
+        );
+    }
+});
+
+// BUCLE PRINCIPAL
+let lastCelebration = 0;
+const clock = new THREE.Clock();
+
+function animate() {
+    const delta = Math.min(0.05, clock.getDelta());
+    const time = clock.getElapsedTime();
+    
+    if(!isDancing) {
+        updatePlayer(delta);
+        
+        // Actualizar bolas
+        balls.forEach(ball => {
+            ball.velocity.y -= gravity * delta;
+            ball.mesh.position.add(ball.velocity.clone().multiplyScalar(delta));
+        });
+        
+        checkCollisions();
+    }
+    
+    // Sistema de celebraciones
+    if(score - lastCelebration >= 100) {
+        lastCelebration = score;
+        isDancing = true;
+        danceType = score >= 500 ? 2 : 1;
+        setTimeout(() => isDancing = false, 2000);
+    }
+    
+    danceCamera(time);
+    renderer.render(scene, camera);
+    requestAnimationFrame(animate);
+}
+
+// INICIAR
+generatePins(PIN_COUNT);
+animate();
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+    </script>
+</body>
+</html>
